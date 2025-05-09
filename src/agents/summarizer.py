@@ -41,10 +41,10 @@ class SummarizerAgent(BaseAgent):
                 
                 self.logger.info(f"Summarizing {title}")
                 
-                # Use the BaseAgent run method
+                # use the BaseAgent run method
                 result = await super().run(content)
                 
-                # Check if the result is properly formatted
+                # check if the result is properly formatted
                 if hasattr(result, 'summary'):
                     # Save the summary
                     pdf_processor.save_summary(summaries_dir, title, result.summary)

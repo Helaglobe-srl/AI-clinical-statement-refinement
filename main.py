@@ -12,6 +12,7 @@ from src.rag.retriever import RAGSystem
 from src.pdf_processing.pdf_processor import PDFProcessor
 from src.agents.summarizer import SummarizerAgent
 from src.agents.refiner import RefinerAgent
+from src.agents.reference_detector import ReferenceDetector
 from src.statement_refinement.statement_refiner import StatementRefiner
 
 #langtrace.init(os.getenv("LANGTRACE_API_KEY"))
@@ -44,7 +45,8 @@ async def process_statement(
     summary_temperature: float,
     refine_temperature: float,
     status_text,
-    progress_bar
+    progress_bar,
+    reference_confirmed: bool = False
 ) -> None:
     """Process the clinical statement using all components."""
     try:
@@ -57,17 +59,69 @@ async def process_statement(
         os.makedirs(INPUT_DIR, exist_ok=True)
         os.makedirs(OUTPUT_DIR, exist_ok=True)
         pdf_processor.create_summaries_directory(PAPERS_SUMMARIES_DIR)
+        
+        # check for references in comments if not already confirmed
+        if not reference_confirmed:
+            comments_file = os.path.join(INPUT_DIR, "comments.txt")
+            
+            if os.path.exists(comments_file):
+                logger.info("Checking for external references in comments...")
+                status_text.text("Checking for external references in comments...")
+                
+                try:
+                    # Read comments file
+                    with open(comments_file, "r", encoding="utf-8") as f:
+                        comments_text = f.read()
+                    
+                    # create and use the reference detector
+                    reference_detector = ReferenceDetector(model=model, logger=logger)
+                    
+                    # run the reference detection asynchronously
+                    detection_result = await reference_detector.run(comments_text)
+                    
+                    # process the results
+                    references = []
+                    explanation = ""
+                    
+                    if hasattr(detection_result, 'references'):
+                        references = detection_result.references
+                    
+                    if hasattr(detection_result, 'explanation'):
+                        explanation = detection_result.explanation
+                    
+                    # log the results
+                    if references:
+                        logger.info(f"Found {len(references)} references in comments")
+                        for ref in references:
+                            logger.info(f"  - {ref}")
+                            
+                        # return the references to be displayed 
+                        return {
+                            "status": "references_found",
+                            "references": references,
+                            "explanation": explanation,
+                            "comments_text": comments_text
+                        }
+                    else:
+                        logger.info("No references found in comments")
+                        
+                except Exception as e:
+                    logger.error(f"Error checking for references: {str(e)}")
+                
+            # No references found or error occurred
+            logger.info("No external references found in comments or references confirmed")
+            progress_bar.progress(0.1)
 
-        # Check for existing summaries
+        # check for existing summaries
         existing_summaries = len(pdf_processor.get_paper_summaries(PAPERS_SUMMARIES_DIR))
         pdf_files = list(Path(PDF_DIR).glob("*.pdf"))
         
-        # Summarize PDFs if needed
+        # summarize PDFs if needed
         if existing_summaries < len(pdf_files):
             logger.info("Processing and summarizing PDFs...")
             status_text.text("Generating summaries for PDF documents using OpenAI agents...")
             
-            # Get PDFs that need summarization
+            # get PDFs that need summarization
             pdfs_to_summarize = pdf_processor.get_pdfs_for_summarization(PDF_DIR, PAPERS_SUMMARIES_DIR)
             
             if pdfs_to_summarize:
@@ -163,6 +217,22 @@ async def process_statement(
 def main():
     st.title("🤖 Clinical Statement Refiner with Hybrid RAG")
     
+    # Initialize session state variables if not already set
+    if "references_detected" not in st.session_state:
+        st.session_state.references_detected = False
+        
+    if "references" not in st.session_state:
+        st.session_state.references = []
+        
+    if "explanation" not in st.session_state:
+        st.session_state.explanation = ""
+        
+    if "reference_confirmed" not in st.session_state:
+        st.session_state.reference_confirmed = False
+        
+    if "pipeline_result" not in st.session_state:
+        st.session_state.pipeline_result = None
+    
     # Model selection
     models = ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"]
     selected_model = st.selectbox(
@@ -227,35 +297,66 @@ def main():
     missing_files = [f for f in required_input_files if not os.path.exists(os.path.join(INPUT_DIR, f))]
     if missing_files:
         st.warning(f"Missing required input files in '{INPUT_DIR}': {', '.join(missing_files)}")
+        
+    # display detected references if any
+    if st.session_state.references_detected:
+        st.subheader("⚠️ External References Detected in Comments")
+        st.write("The following external references were found in the comments file:")
+        for ref in st.session_state.references:
+            st.markdown(f"• `{ref}`")
+        
+        if st.session_state.explanation:
+            st.subheader("Analysis from LLM")
+            st.write(st.session_state.explanation)
+        
+        st.warning("Please verify these references before proceeding. You may want to download these references and add them to the PDFs folder.")
+        
+        if st.button("Continue with Processing"):
+            st.session_state.reference_confirmed = True
+            st.session_state.references_detected = False
+            st.rerun()
     
     # button to start the refinement process
-    if st.button("Refine Statement"):
+    elif st.button("Refine Statement"):
         # new event loop and run the async function
         try:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             
+            # placeholders for progress updates
+            status_text = st.empty()
+            progress_bar = st.progress(0)
+            
             # start process statement
-            refined_result = loop.run_until_complete(process_statement(
+            result = loop.run_until_complete(process_statement(
                 model=st.session_state["openai_model"],
                 summary_temperature=st.session_state["summary_temperature"],
                 refine_temperature=st.session_state["refine_temperature"],
-                status_text=st.empty(),
-                progress_bar=st.progress(0)
+                status_text=status_text,
+                progress_bar=progress_bar,
+                reference_confirmed=st.session_state.reference_confirmed
             ))
             
-            if refined_result:
+            # references found
+            if isinstance(result, dict) and result.get("status") == "references_found":
+                st.session_state.references = result["references"]
+                st.session_state.explanation = result.get("explanation", "")
+                st.session_state.references_detected = True
+                st.rerun()
+            elif result:
+                st.session_state.pipeline_result = result
+                
                 st.subheader("Original Statement")
-                st.write(refined_result.original_statement)
+                st.write(result.original_statement)
                 
                 st.subheader("Refined Statement")
-                st.write(refined_result.refined_statement)
+                st.write(result.refined_statement)
                 
                 st.subheader("Refinement Reasoning")
-                st.write(refined_result.reasoning)
+                st.write(result.reasoning)
                 
                 st.subheader("Citations")
-                st.write(refined_result.citations)
+                st.write(result.citations)
                 
                 st.success("Statement has been refined and saved to the 'outputs' directory")
             else:

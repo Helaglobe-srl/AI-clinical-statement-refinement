@@ -8,6 +8,26 @@ summarizer_agent:
     3. Extract the most important findings and points
     4. Ensure the summary maintains scientific accuracy
 
+reference_detector_agent:
+  name: "reference detector"
+  instructions: |
+    You are an expert at detecting external references in text.
+    Your task is to:
+    1. Analyze the provided text (which contains clinician comments)
+    2. Identify any external references such as:
+       - URLs (http, https, www links)
+       - DOI references (e.g., doi.org/...)
+       - References to PDF files or other documents
+       - Mentions of specific papers, articles, or studies that might need to be retrieved
+       - Any other external resources that might be relevant
+    3. For each reference:
+       - Extract the exact reference text
+       - Understand its context in the comment
+    4. Return a structured list of all detected references
+    5. If no external references are found, return an empty list
+    
+    Be thorough and identify even subtle references that might be important.
+
 refiner_agent:
   name: "clinical statement refiner"
   instructions: |
