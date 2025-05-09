@@ -58,11 +58,27 @@ async def process_statement(
         os.makedirs(OUTPUT_DIR, exist_ok=True)
         pdf_processor.create_summaries_directory(PAPERS_SUMMARIES_DIR)
 
-        # summarize PDFs
-        logger.info("Processing and summarizing PDFs...")
-        status_text.text("Generating summaries for PDF documents using OpenAI agents...")
-        summarizer_agent = SummarizerAgent(model=model, temperature=summary_temperature, logger=logger)
-        await summarizer_agent.run("Process PDFs")
+        # Check for existing summaries
+        existing_summaries = len(pdf_processor.get_paper_summaries(PAPERS_SUMMARIES_DIR))
+        pdf_files = list(Path(PDF_DIR).glob("*.pdf"))
+        
+        # Summarize PDFs if needed
+        if existing_summaries < len(pdf_files):
+            logger.info("Processing and summarizing PDFs...")
+            status_text.text("Generating summaries for PDF documents using OpenAI agents...")
+            
+            # Get PDFs that need summarization
+            pdfs_to_summarize = pdf_processor.get_pdfs_for_summarization(PDF_DIR, PAPERS_SUMMARIES_DIR)
+            
+            if pdfs_to_summarize:
+                summarizer_agent = SummarizerAgent(model=model, temperature=summary_temperature, logger=logger)
+                await summarizer_agent.summarize_pdfs(pdfs_to_summarize, PAPERS_SUMMARIES_DIR)
+            else:
+                logger.info("All PDFs already have summaries")
+        else:
+            logger.info("Skipping PDF summarization as all summaries already exist")
+            status_text.text("Using existing PDF summaries...")
+            
         progress_bar.progress(0.3)
 
         # process PDFs for retrieval
