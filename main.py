@@ -3,17 +3,9 @@ import logging
 import datetime
 import asyncio
 import streamlit as st
-from typing import List, Dict
 from pathlib import Path
 from dotenv import load_dotenv
-from langchain_community.retrievers import BM25Retriever
-from langchain.retrievers import EnsembleRetriever
-from langchain_community.vectorstores import FAISS
-from langchain_huggingface import HuggingFaceEmbeddings
 from sentence_transformers import CrossEncoder
-from llama_index.core import VectorStoreIndex, Document, Settings
-from llama_index.readers.file import PDFReader
-from llama_index.core.node_parser import SimpleNodeParser
 #from langtrace_python_sdk import langtrace
 from src.utils.logger import Logger
 from src.rag.retriever import RAGSystem
@@ -42,50 +34,6 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
-
-# reranker
-reranker = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
-
-def rerank_documents(query: str, docs: List[Document], top_k: int = 4) -> List[Document]:
-    """Rerank documents using Cross-Encoder."""
-    # pairs of (query, document) for scoring
-    pairs = [[query, doc.get_content() if hasattr(doc, 'get_content') else doc.page_content] for doc in docs]
-    
-    # get scores for each pair
-    scores = reranker.predict(pairs)
-    
-    # sort documents by score
-    scored_docs = list(zip(docs, scores))
-    scored_docs.sort(key=lambda x: x[1], reverse=True)
-    
-    # return top_k documents
-    return [doc for doc, score in scored_docs[:top_k]]
-
-def setup_retrievers(documents: List[Document], embedding_model: str = "all-MiniLM-L6-v2", k: int = 4):
-    """Set up sparse (BM25), dense (FAISS), and ensemble retrievers."""
-    texts = [doc.get_content() for doc in documents]
-    
-    # BM25 retriever
-    bm25_retriever = BM25Retriever.from_texts(
-        texts,
-        k=k, 
-        b=0.75,
-        k1=1.5
-    )
-    
-    # FAISS vector store and retriever
-    embedding = HuggingFaceEmbeddings(model_name=embedding_model)
-    faiss_vectorstore = FAISS.from_texts(texts, embedding)
-    faiss_retriever = faiss_vectorstore.as_retriever(search_kwargs={"k": k}) 
-    
-    # ensemble retriever with weights
-    ensemble_retriever = EnsembleRetriever(
-        retrievers=[bm25_retriever, faiss_retriever],
-        weights=[0.3, 0.7],  # weights to favor dense retrieval
-        top_k_limit=k  # same k as individual retrievers
-    )
-    
-    return ensemble_retriever
 
 def create_summaries_directory():
     """Create papers_summaries directory if it doesn't exist."""

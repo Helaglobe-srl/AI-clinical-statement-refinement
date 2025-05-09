@@ -1,6 +1,7 @@
 from agents import Agent, ModelSettings
 from src.utils.logger import Logger
 from .base_agent import BaseAgent, PdfSummary
+import os
 
 class SummarizerAgent(BaseAgent):
     """Agent for summarizing PDF documents."""

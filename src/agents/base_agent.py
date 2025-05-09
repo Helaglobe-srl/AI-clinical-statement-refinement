@@ -1,6 +1,6 @@
 from typing import Dict, Union
 from pydantic import BaseModel, Field
-from agents import Agent, Runner, ModelSettings
+from agents import Runner
 from src.utils.logger import Logger
 import yaml
 import os
@@ -46,8 +46,8 @@ class BaseAgent:
         
         if "retrieved_documents" in context:
             formatted_context.append("Retrieved Documents:")
-            for i, doc in enumerate(context["retrieved_documents"], 1):
-                formatted_context.append(f"\nDocument {i}:\n{doc}\n")
+            for doc in context["retrieved_documents"]:
+                formatted_context.append(f"\n{doc}")
         
         if "paper_summaries" in context:
             formatted_context.append("\nPaper Summaries:")
