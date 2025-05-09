@@ -14,21 +14,23 @@ from sentence_transformers import CrossEncoder
 from llama_index.core import VectorStoreIndex, Document, Settings
 from llama_index.readers.file import PDFReader
 from llama_index.core.node_parser import SimpleNodeParser
-from statement_refiner_agent import (
-    process_statement_with_agent, 
-    read_file_content, 
-    get_paper_summaries, 
-    process_and_summarize_pdfs,
-    RefinedStatement
-)
-from langtrace_python_sdk import langtrace
-langtrace.init(os.getenv("LANGTRACE_API_KEY"))
+#from langtrace_python_sdk import langtrace
+from src.utils.logger import Logger
+from src.rag.retriever import RAGSystem
+from src.pdf_processing.pdf_processor import PDFProcessor
+from src.agents.summarizer import SummarizerAgent
+from src.agents.refiner import RefinerAgent
+from src.statement_refinement.statement_refiner import StatementRefiner
+
+#langtrace.init(os.getenv("LANGTRACE_API_KEY"))
 
 load_dotenv()
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PDF_DIR = os.path.join(BASE_DIR, "pdfs")
 PAPERS_SUMMARIES_DIR = os.path.join(BASE_DIR, "papers_summaries")
+INPUT_DIR = os.path.join(BASE_DIR, "inputs")
+OUTPUT_DIR = os.path.join(BASE_DIR, "outputs")
 
 # logging
 LOG_DIR = "logs"
@@ -58,30 +60,6 @@ def rerank_documents(query: str, docs: List[Document], top_k: int = 4) -> List[D
     
     # return top_k documents
     return [doc for doc, score in scored_docs[:top_k]]
-
-def process_pdfs(pdf_folder: str, chunk_size: int = 512, chunk_overlap: int = 50) -> List[Document]:
-    """Process PDF files from a folder and return documents."""
-    documents = []
-    pdf_files = list(Path(pdf_folder).glob("*.pdf"))
-    
-    for pdf_path in pdf_files:
-        logger.info(f"Processing {pdf_path}")
-        try:
-            # read PDF and parse into nodes
-            reader = PDFReader()
-            docs = reader.load_data(pdf_path)
-            parser = SimpleNodeParser.from_defaults(
-                chunk_size=chunk_size,
-                chunk_overlap=chunk_overlap
-            )
-            nodes = parser.get_nodes_from_documents(docs)
-            
-            documents.extend(nodes)
-            
-        except Exception as e:
-            logger.error(f"Error processing {pdf_path}: {str(e)}")
-    
-    return documents
 
 def setup_retrievers(documents: List[Document], embedding_model: str = "all-MiniLM-L6-v2", k: int = 4):
     """Set up sparse (BM25), dense (FAISS), and ensemble retrievers."""
@@ -113,117 +91,109 @@ def create_summaries_directory():
     """Create papers_summaries directory if it doesn't exist."""
     os.makedirs(PAPERS_SUMMARIES_DIR, exist_ok=True)
 
-async def main_async():
-    os.makedirs(PDF_DIR, exist_ok=True)
-    create_summaries_directory()
-    
-    model = st.session_state.get("openai_model", "gpt-4o")
-    
-    # Get the selected temperature settings
-    summary_temperature = st.session_state.get("summary_temperature", 0.3)
-    refine_temperature = st.session_state.get("refine_temperature", 0.0)
-    
-    # summarize PDFs using OpenAI Agent
-    logger.info("Processing and summarizing PDFs...")
-    status_text = st.empty()
-    progress_bar = st.progress(0)
-    
-    status_text.text("Generating summaries for PDF documents using OpenAI agents...")
-    await process_and_summarize_pdfs(PDF_DIR, PAPERS_SUMMARIES_DIR, model, summary_temperature)
-    progress_bar.progress(0.3)
-    
-    logger.info("Processing PDFs for retrieval...")
-    status_text.text("Processing PDFs for retrieval...")
-    documents = process_pdfs(PDF_DIR)
-    
-    if not documents:
-        logger.warning("No documents found in the PDF folder!")
-        st.error("No documents found in the PDF folder! Please add some PDF files to the 'pdfs' directory.")
-        return
-    
-    logger.info(f"Processed {len(documents)} document chunks")
-    progress_bar.progress(0.4)
-    
-    # retrievers
-    logger.info("Setting up retrievers...")
-    status_text.text("Setting up retrieval system...")
-    ensemble_retriever = setup_retrievers(documents, k=4)
-    progress_bar.progress(0.5)
-    
-    # read input files
-    initial_statement = read_file_content(os.path.join(BASE_DIR, "statement.txt"))
-    agreement_percentage = read_file_content(os.path.join(BASE_DIR, "agreement_percentage.txt"))
-    comments = read_file_content(os.path.join(BASE_DIR, "comments.txt"))
-    
-    if not initial_statement:
-        logger.error("Statement file is missing or empty!")
-        st.error("Statement file is missing or empty! Please create a 'statement.txt' file.")
-        return
-    
-    # perform retrieval with ensemble method (BM25 + FAISS)
-    logger.info("Retrieving relevant documents using ensemble method...")
-    status_text.text("Retrieving relevant documents...")
-    ensemble_docs = ensemble_retriever.invoke(initial_statement)
-    progress_bar.progress(0.6)
-    
-    # rerank retrieved documents with Cross-Encoder
-    logger.info("Reranking documents...")
-    status_text.text("Reranking retrieved documents...")
-    reranked_docs = rerank_documents(initial_statement, ensemble_docs)
-    progress_bar.progress(0.7)
-    
-    # extract content from retrieved documents
-    retrieved_content = []
-    for doc in reranked_docs:
-        content = doc.get_content() if hasattr(doc, 'get_content') else doc.page_content
-        retrieved_content.append(content)
-    
-    # save retrieved documents to a file
-    with open(os.path.join(BASE_DIR, "retrieved_documents.txt"), "w", encoding="utf-8") as f:
-        for i, content in enumerate(retrieved_content):
-            doc_identifier = content[:30].replace("\n", " ").strip() + "..."
-            f.write(f"Document {i+1} ['{doc_identifier}']:\n")
-            f.write("-" * 50 + "\n")
-            f.write(content + "\n\n")
-            f.write("=" * 80 + "\n\n")
-    
-    # get paper summaries
-    paper_summaries = get_paper_summaries(PAPERS_SUMMARIES_DIR)
-    
-    # process statement with agent
-    logger.info("Processing statement with OpenAI agent...")
-    status_text.text("Refining clinical statement with OpenAI agent...")
-    
-    refined_statement = await process_statement_with_agent(
-        initial_statement=initial_statement,
-        agreement_percentage=agreement_percentage,
-        comments=comments,
-        retrieved_documents=retrieved_content,
-        paper_summaries=paper_summaries,
-        model=model,
-        temperature=refine_temperature
-    )
-    progress_bar.progress(0.9)
-    
-    # save refined statement
-    with open(os.path.join(BASE_DIR, "refined_statement.txt"), "w", encoding="utf-8") as f:
-        f.write(refined_statement.refined_statement)
-    
-    # save reasoning and citations to a separate file
-    with open(os.path.join(BASE_DIR, "refinement_reasoning.txt"), "w", encoding="utf-8") as f:
-        f.write(refined_statement.reasoning)
-    with open(os.path.join(BASE_DIR, "refinement_citations.txt"), "w", encoding="utf-8") as f:
-        f.write(refined_statement.citations)
-    
-    progress_bar.progress(1.0)
-    status_text.text("Process completed successfully!")
-    
-    return refined_statement
+async def process_statement(
+    model: str,
+    summary_temperature: float,
+    refine_temperature: float,
+    status_text,
+    progress_bar
+) -> None:
+    """Process the clinical statement using all components."""
+    try:
+        logger = Logger()
+        pdf_processor = PDFProcessor(logger=logger)
+        rag_system = RAGSystem(logger=logger)
+        statement_refiner = StatementRefiner(BASE_DIR, logger=logger)
+
+        os.makedirs(PDF_DIR, exist_ok=True)
+        os.makedirs(INPUT_DIR, exist_ok=True)
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        pdf_processor.create_summaries_directory(PAPERS_SUMMARIES_DIR)
+
+        # summarize PDFs
+        logger.info("Processing and summarizing PDFs...")
+        status_text.text("Generating summaries for PDF documents using OpenAI agents...")
+        summarizer_agent = SummarizerAgent(model=model, temperature=summary_temperature, logger=logger)
+        await summarizer_agent.run("Process PDFs")
+        progress_bar.progress(0.3)
+
+        # process PDFs for retrieval
+        logger.info("Processing PDFs for retrieval...")
+        status_text.text("Processing PDFs for retrieval...")
+        documents = pdf_processor.process_pdfs(PDF_DIR)
+
+        if not documents:
+            logger.warning("No documents found in the PDF folder!")
+            st.error("No documents found in the PDF folder! Please add some PDF files to the 'pdfs' directory.")
+            return
+
+        logger.info(f"Processed {len(documents)} document chunks")
+        progress_bar.progress(0.4)
+
+        # setup retrievers
+        logger.info("Setting up retrievers...")
+        status_text.text("Setting up retrieval system...")
+        rag_system.setup_retrievers(documents)
+        progress_bar.progress(0.5)
+
+        # read input files
+        initial_statement, agreement_percentage, comments = statement_refiner.read_input_files()
+
+        if not initial_statement:
+            logger.error("Statement file is missing or empty!")
+            st.error("Statement file is missing or empty! Please create a 'statement.txt' file in the 'inputs' directory.")
+            return
+
+        # retrieve and rerank documents
+        logger.info("Retrieving relevant documents using ensemble method...")
+        status_text.text("Retrieving relevant documents...")
+        ensemble_docs = rag_system.retrieve_documents(initial_statement)
+        progress_bar.progress(0.6)
+
+        logger.info("Reranking documents...")
+        status_text.text("Reranking retrieved documents...")
+        reranked_docs = rag_system.rerank_documents(initial_statement, ensemble_docs)
+        progress_bar.progress(0.7)
+
+        # save retrieved documents
+        statement_refiner.save_retrieved_documents(reranked_docs)
+
+        # paper summaries
+        paper_summaries = pdf_processor.get_paper_summaries(PAPERS_SUMMARIES_DIR)
+
+        # process statement with agent
+        logger.info("Processing statement with OpenAI agent...")
+        status_text.text("Refining clinical statement with OpenAI agent...")
+        
+        # extract content from documents for the agent
+        retrieved_content = [doc.get_content() if hasattr(doc, 'get_content') else doc.page_content for doc in reranked_docs]
+        
+        refiner_agent = RefinerAgent(model=model, temperature=refine_temperature, logger=logger) 
+        refined_statement = await refiner_agent.run({ 
+            "initial_statement": initial_statement,
+            "agreement_percentage": agreement_percentage,
+            "comments": comments,
+            "retrieved_documents": retrieved_content,
+            "paper_summaries": paper_summaries
+        })
+        progress_bar.progress(0.9)
+
+        # Save refined statement and related files
+        statement_refiner.save_output_files(refined_statement)
+        progress_bar.progress(1.0)
+        status_text.text("Process completed successfully!")
+
+        return refined_statement
+
+    except Exception as e:
+        logger.error(f"Error in main process: {str(e)}")
+        st.error(f"An error occurred: {str(e)}")
+        return None
 
 def main():
     st.title("🤖 Clinical Statement Refiner with Hybrid RAG")
     
-    # model selection
+    # Model selection
     models = ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"]
     selected_model = st.selectbox(
         "Select OpenAI model:",
@@ -232,7 +202,7 @@ def main():
     )
     st.session_state["openai_model"] = selected_model
     
-    # temperature settings
+    # Temperature settings
     col1, col2 = st.columns(2)
     with col1:
         summary_temp = st.slider(
@@ -277,19 +247,32 @@ def main():
         st.info(f"Found {len(pdf_files)} PDF files to process.")
         
         # check if summaries already exist
-        existing_summaries = len(get_paper_summaries(PAPERS_SUMMARIES_DIR))
+        pdf_processor = PDFProcessor()
+        existing_summaries = len(pdf_processor.get_paper_summaries(PAPERS_SUMMARIES_DIR))
         if existing_summaries > 0:
             st.info(f"{existing_summaries} PDF summaries already exist and will be reused.")
     
+    # check input files
+    required_input_files = ["statement.txt", "agreement_percentage.txt", "comments.txt"]
+    missing_files = [f for f in required_input_files if not os.path.exists(os.path.join(INPUT_DIR, f))]
+    if missing_files:
+        st.warning(f"Missing required input files in '{INPUT_DIR}': {', '.join(missing_files)}")
+    
     # button to start the refinement process
     if st.button("Refine Statement"):
-        # Create a new event loop and run the async function
+        # new event loop and run the async function
         try:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             
-            # process statement with OpenAI agent
-            refined_result = loop.run_until_complete(main_async())
+            # start process statement
+            refined_result = loop.run_until_complete(process_statement(
+                model=st.session_state["openai_model"],
+                summary_temperature=st.session_state["summary_temperature"],
+                refine_temperature=st.session_state["refine_temperature"],
+                status_text=st.empty(),
+                progress_bar=st.progress(0)
+            ))
             
             if refined_result:
                 st.subheader("Original Statement")
@@ -304,7 +287,7 @@ def main():
                 st.subheader("Citations")
                 st.write(refined_result.citations)
                 
-                st.success("Statement has been refined and saved to 'refined_statement.txt'")
+                st.success("Statement has been refined and saved to the 'outputs' directory")
             else:
                 st.error("Failed to refine the statement. Check the logs for details.")
             
@@ -312,8 +295,7 @@ def main():
             loop.close()
             
         except Exception as e:
-            logger.error(f"Error in main process: {str(e)}")
             st.error(f"An error occurred: {str(e)}")
 
 if __name__ == "__main__":
-    main() 
+    main()
