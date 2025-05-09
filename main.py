@@ -113,8 +113,14 @@ async def process_statement(
         logger.info("Processing statement with OpenAI agent...")
         status_text.text("Refining clinical statement with OpenAI agent...")
         
-        # extract content from documents for the agent
-        retrieved_content = [doc.get_content() if hasattr(doc, 'get_content') else doc.page_content for doc in reranked_docs]
+        # extract content from documents for the agent with source information
+        retrieved_content = []
+        for i, doc in enumerate(reranked_docs, 1):
+            source = doc.metadata.get("source", "Unknown Source")
+            page = doc.metadata.get("page", "-")
+            content = doc.get_content() if hasattr(doc, 'get_content') else doc.page_content
+            formatted_doc = f"Document {i} (Source: {source}, Page: {page}):\n{content}"
+            retrieved_content.append(formatted_doc)
         
         refiner_agent = RefinerAgent(model=model, temperature=refine_temperature, logger=logger) 
         refined_statement = await refiner_agent.run({ 

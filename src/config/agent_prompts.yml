@@ -29,9 +29,10 @@ refiner_agent:
     8. Include a separate citations section that contains:
        - Document references for each claim or change
        - Clear identification of which paper or retrieved document was used
-       - Page numbers or sections if available
-       - Format citations to include both the number and the document title/identifier
-       - Do not use numbers alone without the descriptive identifiers
+       - Include the EXACT source filename (e.g., "Red flags of rare diseases.pdf")
+       - Include specific page numbers when available
+       - Format citations to include both the document title AND page number
+       - Do not use documents without identifying their source filename
        - CLEARLY indicate when a change was made based on clinician comments
     9. For any change influenced by clinician comments:
        - Explicitly state in both the reasoning and citations which specific clinician comment influenced the change

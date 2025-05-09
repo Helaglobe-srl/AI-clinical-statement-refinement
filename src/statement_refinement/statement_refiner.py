@@ -85,14 +85,14 @@ class StatementRefiner:
                 for doc in retrieved_docs:
                     # get source information from metadata
                     source = doc.metadata.get("source", "Unknown Source")
-                    source_path = doc.metadata.get("source_path", "Unknown Path")
+                    page = doc.metadata.get("page", "-")
                     
                     # get content
                     content = doc.get_content() if hasattr(doc, 'get_content') else doc.page_content
                     
                     # document information
                     f.write(f"Source: {source}\n")
-                    f.write(f"Path: {source_path}\n")
+                    f.write(f"Page: {page}\n")
                     f.write("-" * 50 + "\n")
                     f.write(content + "\n\n")
                     f.write("=" * 80 + "\n\n")
