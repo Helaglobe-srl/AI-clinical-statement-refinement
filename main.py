@@ -234,11 +234,11 @@ def main():
         st.session_state.pipeline_result = None
     
     # Model selection
-    models = ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"]
+    models = ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o", "gpt-4.1"]
     selected_model = st.selectbox(
         "Select OpenAI model:",
         models,
-        index=2  # Default to GPT-4o
+        index=3  # Default to GPT-4o
     )
     st.session_state["openai_model"] = selected_model
     

@@ -12,7 +12,7 @@ class ReferencesResult(BaseModel):
 class ReferenceDetector(BaseAgent):
     """Agent for detecting external references in comments using LLM."""
     
-    def __init__(self, model: str = "gpt-4", temperature: float = 0.1, logger: Logger = None):
+    def __init__(self, model: str = "gpt-4o", temperature: float = 0.1, logger: Logger = None):
         """Initialize the reference detector agent.
         
         Args:
